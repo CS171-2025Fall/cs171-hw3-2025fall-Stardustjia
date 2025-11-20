@@ -53,16 +53,19 @@ void IntersectionTestIntegrator::render(ref<Camera> camera, ref<Scene> scene) {
         // You should assign the following two variables
         // const Vec2f &pixel_sample = ...
         // auto ray = ...
+        const Vec2f &pixel_sample = sampler.getPixelSample();
+        auto ray =
+            camera->generateDifferentialRay(pixel_sample.x, pixel_sample.y);
 
         // After you assign pixel_sample and ray, you can uncomment the
         // following lines to accumulate the radiance to the film.
         //
         //
         // Accumulate radiance
-        // assert(pixel_sample.x >= dx && pixel_sample.x <= dx + 1);
-        // assert(pixel_sample.y >= dy && pixel_sample.y <= dy + 1);
-        // const Vec3f &L = Li(scene, ray, sampler);
-        // camera->getFilm()->commitSample(pixel_sample, L);
+        assert(pixel_sample.x >= dx && pixel_sample.x <= dx + 1);
+        assert(pixel_sample.y >= dy && pixel_sample.y <= dy + 1);
+        const Vec3f &L = Li(scene, ray, sampler);
+        camera->getFilm()->commitSample(pixel_sample, L);
       }
     }
   }
@@ -104,7 +107,9 @@ Vec3f IntersectionTestIntegrator::Li(
       // @see SurfaceInteraction::spawnRay
       //
       // You should update ray = ... with the spawned ray
-      UNIMPLEMENTED;
+      Float pdf;
+      interaction.bsdf->sample(interaction, sampler, &pdf);
+      ray = interaction.spawnRay(interaction.wi);
       continue;
     }
 
@@ -148,8 +153,12 @@ Vec3f IntersectionTestIntegrator::directLighting(
   //
   //    You can use iteraction.p to get the intersection position.
   //
-  UNIMPLEMENTED;
-
+  SurfaceInteraction shadow_interaction;
+  test_ray.setTimeMax(
+      dist_to_light - 1e-4);  // Avoid self-intersection at light source
+  if (scene->intersect(test_ray, shadow_interaction)) {
+    return color;  // Occluded
+  }
   // Not occluded, compute the contribution using perfect diffuse diffuse model
   // Perform a quick and dirty check to determine whether the BSDF is ideal
   // diffuse by RTTI
@@ -168,9 +177,13 @@ Vec3f IntersectionTestIntegrator::directLighting(
     Float cos_theta =
         std::max(Dot(light_dir, interaction.normal), 0.0f);  // one-sided
 
+    // Define a default light intensity (can be adjusted as needed)
+    const Vec3f light_intensity(2.0f);
+
     // You should assign the value to color
     // color = ...
-    UNIMPLEMENTED;
+    color = bsdf->evaluate(interaction) * cos_theta * light_intensity /
+            (dist_to_light * dist_to_light);
   }
 
   return color;
