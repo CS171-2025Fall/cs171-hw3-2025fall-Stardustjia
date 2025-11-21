@@ -7,12 +7,12 @@
       0.5
     ],
     "point_light_flux": [
-      17.0,
-      12.0,
-      5.0
+      9.0,
+      6.0,
+      2.0
     ],
     "max_depth": 16,
-    "spp": 32
+    "spp": 512
   },
   "film": {
     "resolution": [
@@ -63,6 +63,13 @@
         0.065,
         0.05
       ]
+    },
+    "floor_texture": {
+      "type": "image",
+      "path": "assets/bricks.exr",
+      "tex_coordinate_generator": {
+        "type": "uvmapping2d"
+      }
     }
   },
   "materials": {
@@ -81,9 +88,18 @@
     "perfect_refraction": {
       "type": "refraction",
       "eta": 2.0
+    },
+    "floor_material": {
+      "type": "diffuse",
+      "texture_name": "floor_texture"
     }
   },
   "objects": [
+    {
+      "type": "mesh",
+      "path": "assets/cbox/floor.obj",
+      "material_name": "floor_material"
+    },
     {
       "type": "mesh",
       "path": "assets/cbox/left.obj",
@@ -102,7 +118,15 @@
     {
       "type": "mesh",
       "path": "assets/cbox/ceiling.obj",
-      "material_name": "grey_diffuse"
+      "material_name": "grey_diffuse",
+      "light": {
+        "type": "area",
+        "radiance": [
+          8.0,
+          6.0,
+          2.0
+        ]
+      }
     },
     {
       "type": "mesh",

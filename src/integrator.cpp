@@ -73,62 +73,93 @@ void IntersectionTestIntegrator::render(ref<Camera> camera, ref<Scene> scene) {
 
 Vec3f IntersectionTestIntegrator::Li(
     ref<Scene> scene, DifferentialRay &ray, Sampler &sampler) const {
-  Vec3f color(0.0);
-
-  // Cast a ray until we hit a non-specular surface or miss
-  // Record whether we have found a diffuse surface
-  bool diffuse_found = false;
-  SurfaceInteraction interaction;
+  Vec3f accumulated_color(0.0f);
+  Vec3f throughput(
+      1.0f);  // Represents how much light is transmitted along the path
 
   for (int i = 0; i < max_depth; ++i) {
-    interaction      = SurfaceInteraction();
+    SurfaceInteraction interaction;
     bool intersected = scene->intersect(ray, interaction);
 
-    // Perform RTTI to determine the type of the surface
-    bool is_ideal_diffuse =
-        dynamic_cast<const IdealDiffusion *>(interaction.bsdf) != nullptr;
-    bool is_perfect_refraction =
-        dynamic_cast<const PerfectRefraction *>(interaction.bsdf) != nullptr;
+    if (!intersected) {
+      // Ray escaped the scene, contribute nothing.
+      break;
+    }
 
-    // Set the outgoing direction
+    // Set the outgoing direction for BSDF evaluation
     interaction.wo = -ray.direction;
 
-    if (!intersected) {
-      break;
-    }
-
-    if (is_perfect_refraction) {
-      // We should follow the specular direction
-      // TODO(HW3): call the interaction.bsdf->sample to get the new direction
-      // and update the ray accordingly.
-      //
-      // Useful Functions:
-      // @see BSDF::sample
-      // @see SurfaceInteraction::spawnRay
-      //
-      // You should update ray = ... with the spawned ray
-      Float pdf;
-      interaction.bsdf->sample(interaction, sampler, &pdf);
-      ray = interaction.spawnRay(interaction.wi);
-      continue;
-    }
+    // Perform RTTI to determine the type of the surface
+    const BSDF *bsdf = interaction.bsdf;
+    bool is_ideal_diffuse =
+        dynamic_cast<const IdealDiffusion *>(bsdf) != nullptr;
+    bool is_perfect_refraction =
+        dynamic_cast<const PerfectRefraction *>(bsdf) != nullptr;
 
     if (is_ideal_diffuse) {
-      // We only consider diffuse surfaces for direct lighting
-      diffuse_found = true;
+      // Hit a diffuse surface. Calculate direct lighting here and terminate the
+      // path.
+      Vec3f direct_light =
+          directLighting(scene, interaction);  // Contribution from point light
+
+      // Add contribution from area lights using multiple samples per light
+      const int light_samples =
+          16;  // Number of samples per area light, can be adjusted
+      for (const auto &light : scene->getLights()) {
+        Vec3f light_contribution(0.0f);
+        for (int j = 0; j < light_samples; ++j) {
+          SurfaceInteraction light_sample = light->sample(sampler);
+          Vec3f light_dir                 = light_sample.p - interaction.p;
+          Float dist2                     = Dot(light_dir, light_dir);
+          light_dir                       = Normalize(light_dir);
+
+          DifferentialRay shadow_ray(interaction.p, light_dir);
+          shadow_ray.setTimeMax(std::sqrt(dist2) - 1e-4f);
+          SurfaceInteraction shadow_isect;
+          if (scene->intersect(shadow_ray, shadow_isect)) {
+            continue;
+          }
+
+          interaction.wi  = light_dir;
+          Vec3f f         = bsdf->evaluate(interaction);
+          Vec3f Le        = light->Le(light_sample, -light_dir);
+          Float cos_theta = std::max(0.0f, Dot(interaction.normal, light_dir));
+          Float cos_light =
+              std::max(0.0f, Dot(light_sample.normal, -light_dir));
+          Float pdf = light->pdf(light_sample);
+          if (pdf > 0.0f) {
+            light_contribution +=
+                f * Le * cos_theta * cos_light / (dist2 * pdf);
+          }
+        }
+        direct_light +=
+            light_contribution / light_samples;  // Average the contribution
+      }
+
+      accumulated_color += throughput * direct_light;
+      break;  // Path terminates on diffuse surfaces in this simple integrator.
+    } else if (is_perfect_refraction) {
+      // Hit a refractive surface. Sample a new direction and continue the path.
+      Float pdf;
+      Vec3f f = bsdf->sample(
+          interaction, sampler, &pdf);  // This updates interaction.wi
+
+      // Update throughput by the BSDF value and PDF
+      if (pdf > 0.0f) {
+        throughput *= f / pdf;
+      } else {
+        break;  // Stop if sampling is invalid
+      }
+
+      // Create the next ray and continue the loop
+      ray = interaction.spawnRay(interaction.wi);
+    } else {
+      // Hit a surface we don't handle (or a light source directly). Stop.
       break;
     }
-
-    // We simply omit any other types of surfaces
-    break;
   }
 
-  if (!diffuse_found) {
-    return color;
-  }
-
-  color = directLighting(scene, interaction);
-  return color;
+  return accumulated_color;
 }
 
 Vec3f IntersectionTestIntegrator::directLighting(
@@ -178,11 +209,9 @@ Vec3f IntersectionTestIntegrator::directLighting(
         std::max(Dot(light_dir, interaction.normal), 0.0f);  // one-sided
 
     // Define a default light intensity (can be adjusted as needed)
-    const Vec3f light_intensity(2.0f);
 
     // You should assign the value to color
-    // color = ...
-    color = bsdf->evaluate(interaction) * cos_theta * light_intensity /
+    color = bsdf->evaluate(interaction) * cos_theta * point_light_flux /
             (dist_to_light * dist_to_light);
   }
 
