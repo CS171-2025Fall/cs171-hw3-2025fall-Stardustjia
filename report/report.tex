@@ -25,18 +25,100 @@
 % Title portion
 \title{Assignment 1:\\ {Exploring OpenGL Programming}} 
 
-\author{Name: \quad \\ student number:\
-\\email: \quad \texttt{}}
+\author{Name: Xinyu Jia\quad \\ student number:2023533102\
+\\email: \quad \texttt{jiaxy2023@shanghaitech.edu.cn}}
 
 % Document starts
 \begin{document}
 \maketitle
 
-\vspace*{2 ex}
+\begin{abstract}
+This report details the implementation of a basic ray tracing renderer for CS171 Assignment 3. The core functionalities, including ray-primitive intersection tests, Bounding Volume Hierarchy (BVH) acceleration structure, and a direct illumination integrator, have been successfully implemented. The renderer supports diffuse and perfect refractive materials, shadow testing, and anti-aliasing. Additionally, the existing texture mapping framework was analyzed. This document will elaborate on the algorithms used, their mathematical foundations, and present the final rendering results.
+\end{abstract}
 
 \section{Introduction}
+This project involves building a ray tracing renderer from a provided C++ framework. The primary goal is to implement fundamental ray tracing components to render a Cornell Box scene with various materials and lighting effects. The implementation covers ray-geometry intersections, acceleration structures for performance, and lighting calculations for realism. This report outlines the implementation details for each required and optional task undertaken.
+
 \section{Implementation Details}
+
+\subsection{Required Tasks}
+
+\subsubsection{Ray-Triangle Intersection}
+\textbf{Function: \texttt{TriangleIntersect}}
+
+The ray-triangle intersection test is implemented using the efficient Möller–Trumbore algorithm. This method directly solves for the barycentric coordinates $(u, v)$ and the ray distance $t$ without needing to pre-calculate the plane normal. The intersection point $\vec{P}$ is defined by the ray equation and the triangle equation:
+\[
+\vec{P} = \vec{O} + t\vec{D} = (1-u-v)\vec{V_0} + u\vec{V_1} + v\vec{V_2}
+\]
+where $\vec{O}$ and $\vec{D}$ are the ray's origin and direction, and $\vec{V_0}, \vec{V_1}, \vec{V_2}$ are the triangle's vertices. This can be rearranged into a linear system:
+\[
+\begin{bmatrix} -\vec{D} & \vec{V_1}-\vec{V_0} & \vec{V_2}-\vec{V_0} \end{bmatrix} \begin{bmatrix} t \\ u \\ v \end{bmatrix} = \vec{O} - \vec{V_0}
+\]
+The implementation uses Cramer's rule to solve for $(t, u, v)$. The determinant of the matrix is first calculated. If it is near zero, the ray is parallel to the triangle plane. Otherwise, a valid intersection is registered only if $u \ge 0, v \ge 0, u + v \le 1$, and $t$ is within the ray's valid range $[\text{t\_min}, \text{t\_max}]$.
+
+\subsubsection{Ray-AABB Intersection}
+\textbf{Function: \texttt{AABB::intersect}}
+
+The ray-AABB intersection is implemented using the slab test method. An AABB can be seen as the intersection of three pairs of parallel planes (slabs) aligned with the coordinate axes. A ray intersects the AABB if and only if the ray's intersection intervals with these three slabs overlap. The algorithm maintains a single valid interval $[t_{min}, t_{max}]$ for the ray segment inside the volume. For each axis, it computes the intersection distances with the two corresponding planes and updates the interval. For an axis-aligned ray, the inverse direction component becomes infinite, but the logic correctly handles this case due to floating-point arithmetic rules, effectively testing if the ray's origin is within the slab for that dimension. An intersection occurs if the final interval is valid (i.e., $t_{min} \le t_{max}$).
+
+\subsubsection{BVH Construction}
+\textbf{Function: \texttt{BVHTree::build}}
+
+The Bounding Volume Hierarchy (BVH) is constructed recursively to accelerate ray intersection tests. While the Surface Area Heuristic (SAH) often yields higher quality trees, the simpler and faster median split heuristic is employed here.
+\begin{enumerate}
+    \item \textbf{Termination:} The recursion stops if a node contains only one primitive or the maximum depth is reached, creating a leaf node.
+    \item \textbf{Partitioning:} The dimension with the largest AABB extent is chosen as the splitting axis. \texttt{std::nth\_element} is then used to partition the primitives in $O(N)$ time based on the median of their centroids along this axis.
+    \item \textbf{Recursion:} The function recursively calls itself for the two resulting subsets, creating left and right children. The AABBs of these children are then merged to form the parent node's AABB.
+\end{enumerate}
+\begin{lstlisting}[language=C++, caption={BVH median split logic.}]
+// Find the axis with the largest extent
+const int &dim = ArgMax(prebuilt_aabb.getExtent());
+// Find the split point
+split = span_left + (span_right - span_left) / 2;
+// Partition primitives using nth_element
+std::nth_element(nodes.begin() + span_left, nodes.begin() + split,
+    nodes.begin() + span_right,
+    [dim](const NodeType &a, const NodeType &b) {
+      return a.getAABB().getCenter()[dim] <
+             b.getAABB().getCenter()[dim];
+    });
+\end{lstlisting}
+
+\subsubsection{Direct Illumination and Refraction}
+The \texttt{IntersectionTestIntegrator} handles direct lighting and perfect refraction.
+\begin{itemize}
+    \item \textbf{Direct Lighting:} For diffuse surfaces, the outgoing radiance $L_o$ is an integral over the hemisphere $\Omega$. For direct lighting from a point light, this simplifies to a sum. A shadow ray is cast towards each light source. If unoccluded, the light's contribution is computed using the BRDF: $L_o = f_r(\omega_i, \omega_o) \cdot L_i \cdot \max(0, \vec{n} \cdot \omega_i)$, where $f_r$ is the diffuse BRDF ($\rho/\pi$), $L_i$ is the incoming radiance, and the dot product is the cosine term.
+    \item \textbf{Refraction:} For refractive materials, \texttt{PerfectRefraction::sample} calculates the new ray direction using Snell's law: $n_1 \sin\theta_1 = n_2 \sin\theta_2$. The implementation correctly determines the relative index of refraction $\eta = n_1/n_2$ based on whether the ray is entering or exiting the medium. Total internal reflection is handled by checking if the term under the square root for the transmitted angle is negative. If so, a reflection ray is generated instead.
+\end{itemize}
+
+\subsubsection{Anti-Aliasing}
+Anti-aliasing is achieved by multi-sampling, a form of stochastic Monte Carlo integration over the pixel area. For each pixel, \texttt{spp} rays are generated. \texttt{sampler.getPixelSample()} provides a uniformly random sample in $[0,1)^2$, which is then mapped to a unique sub-pixel position. The final pixel color is the average of the radiance values computed for these \texttt{spp} samples, effectively smoothing jagged edges.
+
+\subsection{Optional Tasks}
+
+\subsubsection{Texture Mapping}
+Following the assignment update, the focus was on analyzing the provided texture mapping framework.
+\begin{itemize}
+    \item \textbf{Invocation:} Texture color is evaluated via the chain \texttt{Integrator::Li} $\rightarrow$ \texttt{BSDF::evaluate} $\rightarrow$ \texttt{Texture::evaluate}.
+    \item \textbf{Mipmap Support:} The framework robustly supports Mipmapping to prevent aliasing. The \texttt{ImageTexture} constructor loads an image and immediately builds a \texttt{MIPMap} object, which generates and stores a pyramid of downsampled textures. The \texttt{mipmap->LookUp} function performs trilinear filtering. It uses texture coordinate differentials (\texttt{dstdx}, \texttt{dstdy}) to estimate the Level of Detail (LOD) required, then bilinearly interpolates within the two nearest Mipmap levels and linearly interpolates between them.
+    \item \textbf{Sphere UVs and Differentials:} For spheres, UVs are derived from the spherical coordinates of the intersection point: $\phi = \text{atan2}(p_y, p_x)$, $\theta = \text{acos}(p_z)$, leading to $u = \phi / (2\pi)$ and $v = \theta / \pi$. The differentials are essential for high-quality texture filtering, as they inform the Mipmap system about the size of the pixel's footprint on the texture, allowing for the selection of the correct level of detail.
+\end{itemize}
+
 \section{Results}
+The implemented features were tested on the Cornell Box scene. Figure \ref{fig:required} shows the result with all required tasks completed, demonstrating correct BVH traversal, direct lighting with hard shadows, and refraction through the glass sphere. Figure \ref{fig:optional} showcases the result of the texture mapping analysis, featuring a brick texture applied to the floor.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.8\linewidth]{must.png}
+  \caption{Rendered image with all required tasks implemented.}
+  \label{fig:required}
+\end{figure}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.8\linewidth]{optional.png}
+  \caption{Rendered image with optional task: texture mapping.}
+  \label{fig:optional}
+\end{figure}
 
 \end{document}
-

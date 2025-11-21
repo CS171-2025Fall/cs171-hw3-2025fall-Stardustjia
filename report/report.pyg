@@ -1,0 +1,11 @@
+// Find the axis with the largest extent
+const int &dim = ArgMax(prebuilt_aabb.getExtent());
+// Find the split point
+split = span_left + (span_right - span_left) / 2;
+// Partition primitives using nth_element
+std::nth_element(nodes.begin() + span_left, nodes.begin() + split,
+    nodes.begin() + span_right,
+    [dim](const NodeType &a, const NodeType &b) {
+      return a.getAABB().getCenter()[dim] <
+             b.getAABB().getCenter()[dim];
+    });
